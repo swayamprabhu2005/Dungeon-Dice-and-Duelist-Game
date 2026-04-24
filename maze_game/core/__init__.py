@@ -1,0 +1,2 @@
+"""Core loop + state management."""
+

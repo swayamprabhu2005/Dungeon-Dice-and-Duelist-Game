@@ -1,0 +1,2 @@
+"""Player entity (maze-mode)."""
+

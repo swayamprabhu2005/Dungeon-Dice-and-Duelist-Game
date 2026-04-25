@@ -1,2 +1,0 @@
-"""Dice logic and UI."""
-

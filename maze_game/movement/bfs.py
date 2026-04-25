@@ -1,51 +1,23 @@
-# movement/bfs.py
-
 from collections import deque
+from maze_game.maze.a_star_solver import grid_nb
 
-
-def get_neighbors(grid, row, col):
-    cell = grid.get_cell(row, col)
-    neighbors = []
-
-    if not cell.walls["top"]:
-        neighbors.append((row - 1, col))
-
-    if not cell.walls["bottom"]:
-        neighbors.append((row + 1, col))
-
-    if not cell.walls["left"]:
-        neighbors.append((row, col - 1))
-
-    if not cell.walls["right"]:
-        neighbors.append((row, col + 1))
-
-    return neighbors
-
-
-def bfs_reachable(grid, start, max_steps):
+def bfs_reachable_tiles(grid, start, max_steps):
     """
-    Returns all reachable cells within max_steps
+    Breadth First Search (BFS)
+    Use: Find all reachable tiles within dice steps.
+    Returns a dictionary mapping (row, col) -> shortest distance from start.
     """
-    queue = deque()
-    queue.append((start, 0))
-
-    visited = set()
-    visited.add(start)
-
-    reachable = []
-
+    queue = deque([(start, 0)])
+    visited = {start: 0}
+    
     while queue:
-        (row, col), steps = queue.popleft()
-
-        if steps <= max_steps:
-            reachable.append((row, col))
-
-        if steps == max_steps:
+        cur, steps = queue.popleft()
+        if steps >= max_steps:
             continue
-
-        for nr, nc in get_neighbors(grid, row, col):
-            if (nr, nc) not in visited:
-                visited.add((nr, nc))
-                queue.append(((nr, nc), steps + 1))
-
-    return reachable
+            
+        for nb in grid_nb(grid, *cur):
+            if nb not in visited:
+                visited[nb] = steps + 1
+                queue.append((nb, steps + 1))
+                
+    return visited

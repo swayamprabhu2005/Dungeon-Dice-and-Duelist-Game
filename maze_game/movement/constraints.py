@@ -1,18 +1,11 @@
-# movement/constraints.py
-
-
-def manhattan_distance(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-
-def filter_exact_steps(start, reachable_cells, dice_value):
+def csp_valid_moves(reachable_tiles_dict, exact_steps, exit_pos):
     """
-    Only keep cells that are EXACTLY dice_value steps away
+    Constraint Satisfaction (CSP)
+    Use: Enforce movement rules (Dice value = exact steps, only valid paths).
     """
-    valid = []
-
-    for cell in reachable_cells:
-        if manhattan_distance(start, cell) == dice_value:
-            valid.append(cell)
-
-    return valid
+    valid_tiles = []
+    for tile, steps in reachable_tiles_dict.items():
+        # Constraint: Dice value must equal exact steps, UNLESS it's the exit tile!
+        if steps == exact_steps or (tile == exit_pos and steps <= exact_steps):
+            valid_tiles.append(tile)
+    return valid_tiles

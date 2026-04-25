@@ -15,6 +15,14 @@ End screens: R = restart  |  Q = quit
 
 import pygame, pygame.gfxdraw, sys, os, math, time, random, collections, heapq
 
+from maze_game.maze.dfs_generator import generate_maze_dfs
+from maze_game.maze.a_star_solver import astar_solver
+from maze_game.movement.bfs import bfs_reachable_tiles
+from maze_game.movement.constraints import csp_valid_moves
+from maze_game.core.spawn_logic import spawn_goal_tree
+from maze_game.core.combat_ai import hill_climbing_movement, forward_chaining_combat
+from maze_game.core.state_logic import evaluate_game_state, S_MENU, S_MODE, S_MAZE, S_COMBAT, S_OVER, S_WIN
+
 try:
     import cv2, numpy as np
     HAS_CV2 = True
@@ -69,8 +77,7 @@ DIFFICULTIES = {
 }
 
 # ── Game States ────────────────────────────────────────────
-S_MENU, S_MODE, S_MAZE, S_COMBAT, S_OVER, S_WIN = \
-    "MENU","MODE","MAZE","COMBAT","OVER","WIN"
+# (Imported from maze_game.core.state_logic)
 
 # ── Font Cache ─────────────────────────────────────────────
 _fc = {}
@@ -134,47 +141,12 @@ def load_video_frames(path,size):
 # ══════════════════════════════════════════════════════════
 #  MAZE  – DFS
 # ══════════════════════════════════════════════════════════
-def make_maze():
-    rows,cols=MAZE_ROWS,MAZE_COLS
-    g=[[1]*cols for _ in range(rows)]
-    sr,sc=1,1; g[sr][sc]=0
-    stack=[(sr,sc)]; D=[(0,-2),(0,2),(-2,0),(2,0)]
-    while stack:
-        r,c=stack[-1]; random.shuffle(D); moved=False
-        for dr,dc in D:
-            nr,nc=r+dr,c+dc
-            if 1<=nr<rows-1 and 1<=nc<cols-1 and g[nr][nc]==1:
-                g[r+dr//2][c+dc//2]=0; g[nr][nc]=0
-                stack.append((nr,nc)); moved=True; break
-        if not moved: stack.pop()
-    er,ec=rows-2,cols-2; g[er][ec]=0
-    if g[er-1][ec]==1 and g[er][ec-1]==1: g[er-1][ec]=0
-    return g,(sr,sc),(er,ec)
+# (Imported from maze_game.maze.dfs_generator)
 
 # ══════════════════════════════════════════════════════════
 #  PATHFINDING
 # ══════════════════════════════════════════════════════════
-def grid_nb(g, r, c):
-    for dr,dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-        nr,nc=r+dr,c+dc
-        if 0<=nr<len(g) and 0<=nc<len(g[0]) and g[nr][nc]==0:
-            yield (nr,nc)
-
-def astar(g, start, goal):
-    def h(a,b): return abs(a[0]-b[0])+abs(a[1]-b[1])
-    q=[(h(start,goal),0,start)]; came={start:None}; cost={start:0}
-    while q:
-        _,c,cur=heapq.heappop(q)
-        if cur==goal:
-            path=[]; n=cur
-            while n!=start: path.append(n); n=came[n]
-            return path[::-1]
-        for nb in grid_nb(g,*cur):
-            nc2=c+1
-            if nb not in cost or nc2<cost[nb]:
-                cost[nb]=nc2; came[nb]=cur
-                heapq.heappush(q,(nc2+h(nb,goal),nc2,nb))
-    return []
+# (Imported from maze_game.maze.a_star_solver)
 
 # ══════════════════════════════════════════════════════════
 #  WEAPON
@@ -186,10 +158,10 @@ class Weapon:
 def SWORD():  return Weapon("Sword",     "MELEE",  22,  9, ORANGE)
 def GUN():    return Weapon("Energy Gun","RANGED",  12,  6, CYAN)
 def HSWORD(): return Weapon("War Axe",   "MELEE",  30, 14, PURPLE)
-def LANCE():  return Weapon("Energy Lance", "MELEE",  26, 12, BLUE)
+def RLAUNCHER(): return Weapon("Rocket Launcher", "RANGED", 35, 18, RED)
 def SPEAR():  return Weapon("Spear",     "MELEE",  18, 10, GREEN)
 
-ALL_WEAPONS = [SWORD, GUN, HSWORD, LANCE, SPEAR]
+ALL_WEAPONS = [SWORD, GUN, HSWORD, RLAUNCHER, SPEAR]
 
 # ══════════════════════════════════════════════════════════
 #  PARTICLE SYSTEM  (combat effects)
@@ -289,6 +261,18 @@ class Stickman:
         self.atk_cd=0; self.hit_flash=0; self.swing_anim=0
         self.dmg_mult=1.0 if is_player else (diff["dmg_mult"] if diff else 1.0)
         self.speed = ESPD if is_player else (diff["enemy_speed"] if diff else ESPD)
+        
+        self.weapon_img = None
+        try:
+            wpn_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_combat", "weapons")
+            img_path = os.path.join(wpn_dir, f"{self.weapon.name}.png")
+            if os.path.exists(img_path):
+                raw_img = pygame.image.load(img_path).convert_alpha()
+                w, h = raw_img.get_size()
+                scale = 80.0 / max(w, h)
+                self.weapon_img = pygame.transform.smoothscale(raw_img, (int(w * scale), int(h * scale)))
+        except:
+            pass
 
     @property
     def rect(self): return pygame.Rect(int(self.x),int(self.y),self.W,self.H)
@@ -395,105 +379,42 @@ class Stickman:
             
             hx, hy_w = arm_ex-self.facing*8, arm_y+15
             
-            if self.weapon.name == "War Axe":
-                # Long handle
-                aa_line(surf, (100, 80, 60), (hx-self.facing*10, hy_w+10), (wx, wy), 7)
-                # Pommel and wraps
-                pygame.draw.circle(surf, (50,50,50), (int(hx-self.facing*10), int(hy_w+10)), 6)
-                # Top spike
-                pygame.draw.polygon(surf, (180,180,180), [(wx-2, wy-2), (wx+self.facing*15, wy-15), (wx+2, wy+2)])
-                # Giant Axe Head
-                head_poly = [
-                    (wx-self.facing*5, wy-20),
-                    (wx+self.facing*20, wy-30),
-                    (wx+self.facing*40, wy-15),
-                    (wx+self.facing*45, wy+10),
-                    (wx+self.facing*20, wy+35),
-                    (wx-self.facing*5, wy+20)
-                ]
-                pygame.draw.polygon(surf, (150,150,150), head_poly)
-                pygame.draw.polygon(surf, WHITE, head_poly, 3)
-                # Axe Core Glow
-                pygame.draw.circle(surf, self.weapon.col, (int(wx+self.facing*15), int(wy)), 18)
-                pygame.draw.circle(surf, WHITE, (int(wx+self.facing*15), int(wy)), 6)
-
-            elif self.weapon.name == "Energy Lance":
-                # Shaft
-                aa_line(surf, (50,50,60), (hx, hy_w), (wx, wy), 6)
-                # Energy Rings
-                for i in range(1, 5):
-                    px = arm_ex + (wx - arm_ex)*i/4
-                    py = arm_y+5 + (wy - (arm_y+5))*i/4
-                    pygame.draw.circle(surf, self.weapon.col, (int(px), int(py)), 10)
-                    pygame.draw.circle(surf, WHITE, (int(px), int(py)), 4)
-                # Massive Energy Blade Tip
-                tip_poly = [
-                    (wx-self.facing*10, wy-15),
-                    (wx+self.facing*40, wy),
-                    (wx-self.facing*10, wy+15)
-                ]
-                pygame.draw.polygon(surf, self.weapon.col, tip_poly)
-                pygame.draw.polygon(surf, WHITE, tip_poly, 3)
-                # Core line inside tip
-                aa_line(surf, WHITE, (wx, wy), (wx+self.facing*35, wy), 4)
-
-            elif self.weapon.name == "Spear":
-                # Long wooden shaft
-                aa_line(surf, (120, 70, 30), (hx-self.facing*15, hy_w+15), (wx, wy), 6)
-                # Red Tassel / Ribbon
-                pygame.draw.polygon(surf, RED, [(wx-self.facing*5, wy+5), (wx-self.facing*20, wy+25), (wx-self.facing*10, wy+30), (wx-self.facing*2, wy+15)])
-                # Spear Head Base (Gold/Bronze)
-                pygame.draw.circle(surf, GOLD, (int(wx), int(wy)), 6)
-                # Spear Blade (Steel)
-                blade_poly = [
-                    (wx, wy-8),
-                    (wx+self.facing*15, wy-12),
-                    (wx+self.facing*35, wy),
-                    (wx+self.facing*15, wy+12),
-                    (wx, wy+8)
-                ]
-                pygame.draw.polygon(surf, (220,220,230), blade_poly)
-                pygame.draw.polygon(surf, (150,150,160), blade_poly, 2)
-                # Center ridge
-                aa_line(surf, (100,100,110), (wx, wy), (wx+self.facing*32, wy), 2)
-
-            else: # Sword
-                # Handle
-                aa_line(surf, (80,60,50), (hx, hy_w), (arm_ex, arm_y+5), 5)
-                # Pommel
-                pygame.draw.circle(surf, GOLD, (int(hx), int(hy_w)), 4)
-                # Crossguard
-                p1 = (arm_ex - 8, arm_y + 12)
-                p2 = (arm_ex + 8, arm_y - 2)
-                aa_line(surf, GOLD, p1, p2, 6)
-                # Blade Glow
-                aa_line(surf, self.weapon.col, (arm_ex, arm_y+5), (wx, wy), 16)
-                # Blade Core
-                aa_line(surf, WHITE, (arm_ex, arm_y+5), (wx, wy), 6)
-                # Blade Tip
-                pygame.draw.polygon(surf, WHITE, [(wx-self.facing*4, wy-4), (wx+self.facing*12, wy), (wx-self.facing*4, wy+4)])
+            if hasattr(self, "weapon_img") and self.weapon_img:
+                angle_deg = -self.swing_anim*7*self.facing if self.facing == 1 else self.swing_anim*7*self.facing
+                img = pygame.transform.flip(self.weapon_img, True, False) if self.facing == -1 else self.weapon_img
+                rot_img = pygame.transform.rotate(img, angle_deg)
+                rect = rot_img.get_rect(center=(wx, wy))
+                surf.blit(rot_img, rect.topleft)
+            else:
+                # SIMPLE FALLBACK WEAPONS
+                if self.weapon.name == "War Axe":
+                    aa_line(surf, (150, 100, 50), (hx, hy_w), (arm_ex, arm_y+5), 5)
+                    aa_line(surf, (150, 100, 50), (arm_ex, arm_y+5), (wx, wy), 5)
+                    pygame.draw.circle(surf, (200, 200, 200), (int(wx), int(wy)), 12)
+                    pygame.draw.polygon(surf, (180, 180, 180), [(wx-5, wy-15), (wx+self.facing*25, wy), (wx-5, wy+15)])
+                elif self.weapon.name == "Energy Lance":
+                    aa_line(surf, (100, 100, 100), (hx, hy_w), (wx, wy), 4)
+                    pygame.draw.circle(surf, self.weapon.col, (int(wx), int(wy)), 8)
+                    pygame.draw.polygon(surf, WHITE, [(wx-4, wy-4), (wx+self.facing*15, wy), (wx-4, wy+4)])
+                elif self.weapon.name == "Spear":
+                    aa_line(surf, (120, 80, 40), (hx-self.facing*10, hy_w+10), (wx, wy), 4)
+                    pygame.draw.polygon(surf, (200, 200, 200), [(wx-2, wy-4), (wx+self.facing*15, wy), (wx-2, wy+4)])
+                else: # Sword
+                    aa_line(surf, GOLD, (hx, hy_w), (arm_ex, arm_y+5), 4)
+                    aa_line(surf, self.weapon.col, (arm_ex, arm_y+5), (wx, wy), 8)
+                    aa_line(surf, WHITE, (arm_ex, arm_y+5), (wx, wy), 3)
 
         else: # Gun
-            bx2=arm_ex+self.facing*40
+            bx2=arm_ex+self.facing*30
             rx = min(arm_ex, bx2)
-            # Base Gun Body
-            pygame.draw.rect(surf, (40,40,45), (rx, arm_y-2, 40, 16), border_radius=4)
-            # Energy Chamber
-            pygame.draw.rect(surf, self.weapon.col, (rx+5, arm_y, 30, 8), border_radius=2)
-            pygame.draw.rect(surf, WHITE, (rx+10, arm_y+2, 20, 4), border_radius=2)
-            # Barrel
-            pygame.draw.rect(surf, (80,80,90), (rx+35 if self.facing==1 else rx-10, arm_y+2, 15, 8), border_radius=2)
-            # Underbarrel
-            pygame.draw.rect(surf, (60,60,65), (rx+10, arm_y+14, 25, 6), border_radius=2)
             
-            # Muzzle flash/glow
-            pygame.draw.circle(surf, self.weapon.col, (int(bx2), int(arm_y+6)), 20)
-            pygame.draw.circle(surf, WHITE, (int(bx2), int(arm_y+6)), 8)
-            if self.atk_cd<6:
-                pygame.draw.circle(surf, WHITE, (int(bx2), int(arm_y+6)), 35)
-                # Laser beam shot
-                aa_line(surf, self.weapon.col, (bx2, arm_y+6), (bx2+self.facing*800, arm_y+6), 12)
-                aa_line(surf, WHITE, (bx2, arm_y+6), (bx2+self.facing*800, arm_y+6), 6)
+            if hasattr(self, "weapon_img") and self.weapon_img:
+                img = pygame.transform.flip(self.weapon_img, True, False) if self.facing == -1 else self.weapon_img
+                rect = img.get_rect(center=(rx+15, arm_y+5))
+                surf.blit(img, rect.topleft)
+            else:
+                pygame.draw.rect(surf, (60, 60, 60), (rx, arm_y-2, 30, 10))
+                pygame.draw.rect(surf, self.weapon.col, (rx+5, arm_y, 20, 6))
 
         # ── HP bar above head ─────────────────────────────
         bx=cx-26; by=hy-32
@@ -574,11 +495,11 @@ class Dice:
 #  COMBAT ARENA  (dramatic, aa-rendered, particle effects)
 # ══════════════════════════════════════════════════════════
 class Arena:
-    FY=CH-90; LW=80; RW=CW-80
+    FY=CH-90; LW=0; RW=CW
 
     def __init__(self,surf):
         self.surf=surf
-        self._bg=self._make_bg()
+        self._bg=self._make_bg_default()
         self._shake=0; self._shake_off=(0,0)
         self.player=self.enemy=None
         self.projectiles=[]; self.result=None
@@ -586,7 +507,7 @@ class Arena:
         self._screen_flash=0   # frames of red flash
         self._diff=None
 
-    def _make_bg(self):
+    def _make_bg_default(self):
         s=pygame.Surface((CW,CH))
         # gradient sky
         for y in range(CH):
@@ -612,12 +533,27 @@ class Arena:
 
     def init_fight(self,pw,ew,diff):
         self._diff=diff
-        self.player=Stickman(self.LW+80,self.FY-Stickman.H,BLUE,pw,True,diff)
-        self.enemy =Stickman(self.RW-80-Stickman.W,self.FY-Stickman.H,RED,ew,False,diff)
+        self.player=Stickman(160,self.FY-Stickman.H,BLUE,pw,True,diff)
+        self.enemy =Stickman(CW-160-Stickman.W,self.FY-Stickman.H,RED,ew,False,diff)
         self.enemy.facing=-1
         self.projectiles=[]; self.result=None
         self.ps=ParticleSystem()
         self._shake=0; self._screen_flash=0
+        self.randomize_bg()
+
+    def randomize_bg(self):
+        bg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_combat", "backgrounds")
+        try:
+            choice = random.randint(1, 6)
+            img_path = os.path.join(bg_dir, f"{choice}.jpeg")
+            if os.path.exists(img_path):
+                img = pygame.image.load(img_path).convert()
+                self._bg = pygame.transform.smoothscale(img, (CW, CH))
+            else:
+                self._bg = self._make_bg_default()
+        except Exception as e:
+            print(f"Error loading background: {e}")
+            self._bg = self._make_bg_default()
 
     def _do_hit(self,victim,attacker):
         raw=attacker.weapon.dmg+random.randint(-3,3)
@@ -645,24 +581,43 @@ class Arena:
             self.projectiles.append(Proj(bx,by,12*self.player.facing,"player",self.player.weapon.col))
 
     def _enemy_ai(self):
-        e,p=self.enemy,self.player
+        e, p = self.enemy, self.player
         if not e or not p: return
-        dx=p.x-e.x; dist=abs(dx); e.facing=1 if dx>0 else -1
-        if e.weapon.wtype=="MELEE":
-            if dist>50: e.move(e.speed*e.facing)
-            elif e.atk_cd==0:
-                e.atk_cd=52
-                if e.melee_rect().colliderect(p.rect): self._do_hit(p,e)
-            if e.on_ground and abs(e.vx)<0.5 and dist>70: e.jump()
+        
+        if e.weapon.wtype == "MELEE":
+            dist = abs(p.x - e.x)
+            # Hill Climbing: move toward player to maximise damage opportunity
+            spd, facing = hill_climbing_movement(e.x, p.x, e.speed)
+            e.facing = facing
+            if dist > 50:
+                e.move(spd)
+            elif e.atk_cd == 0:
+                e.atk_cd = 52
+                # Forward Chaining: IF collision THEN apply damage THEN knockback
+                is_hit, dmg, kb_dir = forward_chaining_combat(
+                    e.melee_rect(), p.rect, e.weapon.dmg
+                )
+                if is_hit:
+                    raw = dmg + random.randint(-3, 3)
+                    p.hp -= int(raw * e.dmg_mult)
+                    p.apply_kb(kb_dir, e.weapon)
+                    e.swing_anim = 9
+                    self._shake = 9
+                    self.ps.burst(int(p.x + p.W//2), int(p.y + p.H//3), e.weapon.col, 22)
+                    self._screen_flash = 10
+            if e.on_ground and abs(e.vx) < 0.5 and dist > 70:
+                e.jump()
         else:
-            if dist<130:   e.move(-e.speed*e.facing)
-            elif dist>280: e.move(e.speed*e.facing)
-            if e.atk_cd==0 and 100<=dist<=320:
-                e.atk_cd=58
-                bx=e.x+Stickman.W//2; by=e.y+26
-                vx=11 if e.facing==1 else -11
-                self.projectiles.append(Proj(bx,by,vx,"enemy",e.weapon.col))
-            if e.on_ground and abs(e.vx)<0.5: e.jump()
+            dx = p.x - e.x; dist = abs(dx)
+            e.facing = 1 if dx > 0 else -1
+            if dist < 130:   e.move(-e.speed * e.facing)
+            elif dist > 280: e.move(e.speed * e.facing)
+            if e.atk_cd == 0 and 100 <= dist <= 320:
+                e.atk_cd = 58
+                bx = e.x + Stickman.W//2; by = e.y + 26
+                vx = 11 if e.facing == 1 else -11
+                self.projectiles.append(Proj(bx, by, vx, "enemy", e.weapon.col))
+            if e.on_ground and abs(e.vx) < 0.5: e.jump()
 
     def update(self):
         if self.result: return self.result
@@ -703,15 +658,13 @@ class Arena:
         ox,oy=self._shake_off
         s.blit(self._bg,(ox,oy))
 
-        # torchlight animated glow (overlay)
-        for tx_,ty_ in [(self.LW-6,220),(self.RW+6,220),(self.LW-6,420),(self.RW+6,420)]:
-            t=pygame.time.get_ticks()/600
-            flick=int(40+20*math.sin(t+tx_))
-            tg=pygame.Surface((120,120),pygame.SRCALPHA)
-            for rr in range(60,0,-5):
-                a=int(flick*(rr/60))
-                pygame.draw.circle(tg,(255,140,20,a),(60,60),rr)
-            s.blit(tg,(tx_-60+ox,ty_-60+oy))
+        # Draw consistent platform base over the background
+        base_h = CH - self.FY
+        pygame.draw.rect(s, (35, 30, 45), (0, self.FY, CW, base_h))
+        pygame.draw.rect(s, (50, 45, 65), (0, self.FY, CW, base_h), width=4)
+        for x in range(0, CW, 80):
+            pygame.draw.line(s, (25, 20, 35), (x, self.FY), (x, CH), 2)
+            pygame.draw.line(s, (50, 45, 65), (x+2, self.FY), (x+2, CH), 1)
 
         for pr in self.projectiles: pr.draw(s)
         self.ps.draw(s)
@@ -809,34 +762,40 @@ class Game:
 
     # ── Reset maze state ───────────────────────────────────
     def _new_game(self):
-        self.grid,self.start,self.exit=make_maze()
-        self.ppos=self.start
-        self.opt=astar(self.grid,self.start,self.exit)
-        self.dice.reset(); self.dice.value=1
-        self.maze_mode="WAIT_ROLL"
-        self.steps_left=0          # how many steps remain this dice roll
-        self.enemy_present=False
-        self.epos_tile=None
-        self.e_weapon=None
-        self.show_pickup=False
-        self.pickup_w=None
-        diff=DIFFICULTIES[self.diff_name]
-        self.p_hp_max=diff["player_hp"]
-        self.p_hp=self.p_hp_max
-        self.state=S_MAZE
+        # DFS Algorithm: generate a brand new maze
+        self.grid, self.start, self.exit = generate_maze_dfs(MAZE_ROWS, MAZE_COLS)
+        self.ppos = self.start
+        # A* Algorithm: compute optimal path from start to exit once
+        self.opt = astar_solver(self.grid, self.start, self.exit)
+        self._path_steps_walked = 0   # track how far player has progressed on A*
+        self.dice.reset(); self.dice.value = 1
+        self.maze_mode = "WAIT_ROLL"
+        self.steps_left = 0
+        # BFS/CSP: cached reachable tiles for current dice roll
+        self._bfs_reachable = {}    # {tile: steps_from_player}
+        self._csp_valid    = []     # tiles exactly dice_value steps away
+        self.enemy_present = False
+        self.epos_tile = None
+        self.e_weapon = None
+        self.show_pickup = False
+        self.pickup_w = None
+        diff = DIFFICULTIES[self.diff_name]
+        self.p_hp_max = diff["player_hp"]
+        self.p_hp = self.p_hp_max
+        self.state = S_MAZE
 
     @property
     def diff(self): return DIFFICULTIES[self.diff_name]
 
-    # ── valid adjacent open tiles ──────────────────────────
     def _valid_moves(self):
-        r,c=self.ppos
-        moves={}
-        for key,dr,dc in [(pygame.K_UP,-1,0),(pygame.K_DOWN,1,0),
-                           (pygame.K_LEFT,0,-1),(pygame.K_RIGHT,0,1)]:
-            nr,nc=r+dr,c+dc
+        """Returns adjacent open tiles the player can step into with remaining steps."""
+        r, c = self.ppos
+        moves = {}
+        for key, dr, dc in [(pygame.K_UP,-1,0),(pygame.K_DOWN,1,0),
+                            (pygame.K_LEFT,0,-1),(pygame.K_RIGHT,0,1)]:
+            nr, nc = r+dr, c+dc
             if 0<=nr<len(self.grid) and 0<=nc<len(self.grid[0]) and self.grid[nr][nc]==0:
-                moves[key]=(nr,nc)
+                moves[key] = (nr, nc)
         return moves
 
     # ── Events ─────────────────────────────────────────────
@@ -872,6 +831,10 @@ class Game:
                     if ev.key in vm:
                         self.ppos=vm[ev.key]
                         self.steps_left-=1
+                        # BFS: re-compute reachable from NEW position with remaining steps
+                        self._bfs_reachable = bfs_reachable_tiles(self.grid, self.ppos, self.steps_left)
+                        # CSP: re-filter exact-step valid destinations
+                        self._csp_valid = csp_valid_moves(self._bfs_reachable, self.steps_left, self.exit)
                         self._step_check()
                         if self.state==S_COMBAT: return
                         if self.steps_left<=0:
@@ -927,41 +890,59 @@ class Game:
         self.dice.update()
         if self.maze_mode=="ROLLING" and self.dice.ready:
             self.steps_left=self.dice.value
+            # BFS Algorithm: find all tiles reachable within dice steps
+            self._bfs_reachable = bfs_reachable_tiles(self.grid, self.ppos, self.steps_left)
+            # CSP: filter to tiles that are EXACTLY dice_value steps (or exit if within range)
+            self._csp_valid = csp_valid_moves(self._bfs_reachable, self.steps_left, self.exit)
             self.maze_mode="WAIT_MOVE"
 
     def _step_check(self):
-        if self.ppos==self.exit:
-            self.state=S_WIN; return
-        # Spawn enemy if moving along A* optimal path (hidden)
-        if not self.enemy_present and self.ppos in self.opt:
-            idx=self.opt.index(self.ppos)
-            ahead=min(len(self.opt)-1,idx+random.randint(2,3))
-            self.epos_tile=self.opt[ahead]
-            if not self._weapon_queue:
-                self._weapon_queue = [w() for w in ALL_WEAPONS]
-                random.shuffle(self._weapon_queue)
-            self.e_weapon = self._weapon_queue.pop(0)
-            self.enemy_present=True
-        # Trigger combat (hidden – player steps on tile silently)
-        if self.enemy_present and self.ppos==self.epos_tile:
-            self.arena.init_fight(self.p_weapon,self.e_weapon,self.diff)
-            # Carry current player HP into combat
-            self.arena.player.hp=self.p_hp
-            self.arena.player.max_hp=self.p_hp_max
-            self.steps_left=0; self.maze_mode="WAIT_ROLL"
-            self.state=S_COMBAT
+        if self.ppos == self.exit:
+            # Propositional Logic: player reached exit → WIN
+            self.state = evaluate_game_state(S_MAZE, 1, 1, self.ppos, self.exit, False)
+            return
+
+        # Track A* path progress for Goal Tree
+        if self.ppos in self.opt:
+            self._path_steps_walked = self.opt.index(self.ppos) + 1
+
+        if not self.enemy_present:
+            # Goal Tree + Propositional Logic: decide whether to spawn
+            progress = self._path_steps_walked / len(self.opt) if self.opt else 0
+            should_spawn, spawn_pos = spawn_goal_tree(
+                self.grid, self.ppos, self.exit, self.opt, self._path_steps_walked
+            )
+            if should_spawn and spawn_pos:
+                self.epos_tile = spawn_pos
+                if not self._weapon_queue:
+                    self._weapon_queue = [w() for w in ALL_WEAPONS]
+                    random.shuffle(self._weapon_queue)
+                self.e_weapon = self._weapon_queue.pop(0)
+                self.enemy_present = True
+
+        # Trigger combat when player steps on enemy tile
+        if self.enemy_present and self.ppos == self.epos_tile:
+            self.arena.init_fight(self.p_weapon, self.e_weapon, self.diff)
+            self.arena.player.hp = self.p_hp
+            self.arena.player.max_hp = self.p_hp_max
+            self.steps_left = 0; self.maze_mode = "WAIT_ROLL"
+            self.state = S_COMBAT
 
     def _upd_combat(self):
-        r=self.arena.update()
-        if r=="PLAYER_DEAD":
-            self.state=S_OVER
-        elif r=="ENEMY_DEAD":
-            # Reset player HP back to max
-            self.p_hp=self.p_hp_max
-            self.pickup_w=self.e_weapon
-            self.show_pickup=True
-            self.enemy_present=False; self.epos_tile=None
-            self.state=S_MAZE
+        r = self.arena.update()
+        # Forward Chaining + Propositional Logic: evaluate state after combat update
+        enemy_hp = self.arena.enemy.hp if hasattr(self.arena, 'enemy') else 1
+        player_hp = self.arena.player.hp if hasattr(self.arena, 'player') else 1
+        new_state = evaluate_game_state(S_COMBAT, player_hp, enemy_hp, self.ppos, self.exit, False)
+        if r=="PLAYER_DEAD" or new_state == S_OVER:
+            self.state = S_OVER
+        elif r=="ENEMY_DEAD" or new_state == S_MAZE:
+            # Restore player HP after win (Rule: Win → restore HP)
+            self.p_hp = self.p_hp_max
+            self.pickup_w = self.e_weapon
+            self.show_pickup = True
+            self.enemy_present = False; self.epos_tile = None
+            self.state = S_MAZE
 
     # ── Draw ───────────────────────────────────────────────
     def draw(self):
@@ -1032,14 +1013,13 @@ class Game:
                 tx=MOX+cc2*TILE; ty=MOY+r*TILE
                 c.blit(self.wall_tile if g[r][cc2]==1 else self.path_tile,(tx,ty))
 
-        # subtle A* path hint
-        for pr,pc in self.opt:
-            c.blit(self._hl_gold,(MOX+pc*TILE,MOY+pr*TILE))
+        # Subtle A* path hint (golden tiles)
+        for pr2, pc2 in self.opt:
+            c.blit(self._hl_gold,(MOX+pc2*TILE,MOY+pr2*TILE))
 
-        # valid move highlights (adjacent open tiles when it's move time)
+        # BFS/CSP: highlight valid destination tiles (exactly dice_value steps)
         if self.maze_mode=="WAIT_MOVE" and not self.show_pickup:
-            for _,nb in self._valid_moves().items():
-                nr,nc=nb
+            for nr, nc in self._csp_valid:
                 c.blit(self._hl_move,(MOX+nc*TILE,MOY+nr*TILE))
 
         # EXIT glow
@@ -1085,41 +1065,51 @@ class Game:
         pygame.draw.line(c,SIDEBAR_SEP,(SIDEBAR_X,0),(SIDEBAR_X,CH),2)
         SX=SIDEBAR_X; SCX=SX+SIDEBAR_W//2
 
-        txt(c,"MAZE COMBAT",22,GOLD,SCX,22,bold=True)
-        # Difficulty badge
+        # Header Box
+        header_rect = pygame.Rect(SX+12, 12, SIDEBAR_W-24, 70)
+        rrect(c, (20,20,35), header_rect, 10)
+        rrect(c, (40,40,65), header_rect, 10, w=2)
+        txt(c,"MAZE COMBAT",22,GOLD,SCX,35,bold=True)
         dc=self.diff["col"]
-        badge_s=font(14,True).render(f"[ {self.diff_name.upper()} ]",True,dc)
-        c.blit(badge_s,(SCX-badge_s.get_width()//2,40))
-        sep_line(c,58)
+        badge_s=font(13,True).render(f"[ {self.diff_name.upper()} ]",True,dc)
+        c.blit(badge_s,(SCX-badge_s.get_width()//2,53))
 
-        txt(c,"— DICE —",17,CYAN,SCX,72)
-
+        # Dice Section
+        dice_y = 105
+        txt(c,"— DICE —",17,CYAN,SCX,dice_y)
+        
         # Status hint
         if not self.show_pickup:
             if   self.maze_mode=="WAIT_ROLL": hint="Click dice or SPACE to roll"
             elif self.maze_mode=="ROLLING":   hint="Rolling…"
             elif self.maze_mode=="WAIT_MOVE": hint=f"Rolled {self.dice.value}  — Steps left: {self.steps_left}"
             else: hint=""
-            if hint: txt(c,hint,15,YELLOW,SCX,88)
+            if hint: txt(c,hint,15,YELLOW,SCX,dice_y+25)
         if self.maze_mode=="WAIT_MOVE" and not self.show_pickup:
-            txt(c,"Use ↑ ↓ ← → to move",14,(180,220,255),SCX,104)
+            txt(c,"Use ↑ ↓ ← → to move",14,(180,220,255),SCX,dice_y+45)
 
         self.dice.draw(c)
 
-        sep_line(c,462)
+        # Player Section
+        py = 440
+        player_rect = pygame.Rect(SX+12, py, SIDEBAR_W-24, 150)
+        rrect(c, (20,20,35), player_rect, 12)
+        rrect(c, (40,40,65), player_rect, 12, w=2)
+        txt(c,"— PLAYER —",17,CYAN,SCX,py+20)
+        hp_bar(c,SX+28,py+45,SIDEBAR_W-56,24,self.p_hp,self.p_hp_max,"HP",WHITE)
+        txt(c,f"⚔  {self.p_weapon.name}",18,self.p_weapon.col,SCX,py+105)
+        txt(c,f"({self.p_weapon.wtype}   DMG:{self.p_weapon.dmg})",14,WHITE,SCX,py+125)
 
-        txt(c,"— PLAYER —",17,CYAN,SCX,478)
-        hp_bar(c,SX+20,500,SIDEBAR_W-40,22,self.p_hp,self.p_hp_max,"HP",WHITE)
-        txt(c,f"⚔  {self.p_weapon.name}",18,self.p_weapon.col,SCX,546)
-        txt(c,f"({self.p_weapon.wtype}   DMG:{self.p_weapon.dmg})",15,WHITE,SCX,564)
-
-        sep_line(c,580)
-
+        # Controls Section
+        cy = 610
+        ctrl_rect = pygame.Rect(SX+12, cy, SIDEBAR_W-24, 100)
+        rrect(c, (20,20,35), ctrl_rect, 12)
+        rrect(c, (40,40,65), ctrl_rect, 12, w=2)
         controls=[("SPACE","Roll dice"),("Arrows","Move"),("F11","Fullscreen"),("R","Restart")]
         for i,(key,val) in enumerate(controls):
-            y=592+i*18
-            txt_tl(c,key,13,GOLD,SX+16,y,bold=True)
-            txt_tl(c,f"= {val}",13,WHITE,SX+80,y)
+            y=cy+12+i*20
+            txt_tl(c,key,13,GOLD,SX+35,y,bold=True)
+            txt_tl(c,f"= {val}",13,WHITE,SX+110,y)
 
     # ── End Screens ────────────────────────────────────────
     def _draw_over(self,c):

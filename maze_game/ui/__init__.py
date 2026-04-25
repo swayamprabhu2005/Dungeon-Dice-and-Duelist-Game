@@ -1,2 +1,0 @@
-"""Rendering and UI widgets."""
-

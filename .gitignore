@@ -1,18 +1,36 @@
-# Byte-compiled / optimized / DLL files
+# ── Python ────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
 
-# Virtual Environments
+# ── Virtual Environments ──────────────────────────────────
 .venv/
 venv/
-ENV/
 env/
+ENV/
 
-# IDEs
+# ── IDEs / Editors ────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS specific
+# ── OS specific ───────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ── Pygame / OpenCV cache ────────────────────────────────
+*.pyc
+*.pyd
+*.pdb
+
+# ── Large binary assets (optional — remove if you want to
+#    version-control your sprites/videos) ──────────────────
+# maze_game/assets/videos/
+# maze_game/assets/images/
+
+# ── Logs & temp ───────────────────────────────────────────
+*.log
+*.tmp

@@ -138,6 +138,36 @@ def load_video_frames(path,size):
     except Exception as e:
         print(f"[video] {e}"); return []
 
+# ── Audio Loaders ──────────────────────────────────────────
+AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_combat", "Audio")
+BATTLE_BGM = os.path.join(AUDIO_DIR, "During battle.wav")
+DEFEAT_SFX = os.path.join(AUDIO_DIR, "fahhh.mp3")
+VICTORY_SFX = os.path.join(AUDIO_DIR, "Victory.wav")
+
+_sfx_cache = {}
+
+def play_bgm(path, loops=-1):
+    if not os.path.exists(path): return
+    try:
+        if not pygame.mixer.get_init(): pygame.mixer.init()
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play(loops)
+    except Exception as e: print(f"Audio Error: {e}")
+
+def stop_bgm():
+    try:
+        if pygame.mixer.get_init(): pygame.mixer.music.stop()
+    except: pass
+
+def play_sfx(path):
+    if not os.path.exists(path): return
+    try:
+        if not pygame.mixer.get_init(): pygame.mixer.init()
+        if path not in _sfx_cache:
+            _sfx_cache[path] = pygame.mixer.Sound(path)
+        _sfx_cache[path].play()
+    except Exception as e: print(f"Audio Error: {e}")
+
 # ══════════════════════════════════════════════════════════
 #  MAZE  – DFS
 # ══════════════════════════════════════════════════════════
@@ -862,6 +892,14 @@ class Game:
                     if self.dice.handle_click(mp):
                         self.maze_mode="ROLLING"
 
+            if self.state in (S_WIN, S_OVER):
+                play_btn = pygame.Rect(CW//2 - 220, CH//2 + 80, 200, 60)
+                quit_btn = pygame.Rect(CW//2 + 20, CH//2 + 80, 200, 60)
+                if play_btn.collidepoint(mp):
+                    self.p_weapon=SWORD(); self._new_game()
+                elif quit_btn.collidepoint(mp):
+                    pygame.quit(); sys.exit()
+
         if ev.type==pygame.MOUSEMOTION and self.state==S_MODE:
             mp=pygame.mouse.get_pos()
             self._hover_diff=None
@@ -900,6 +938,7 @@ class Game:
         if self.ppos == self.exit:
             # Propositional Logic: player reached exit → WIN
             self.state = evaluate_game_state(S_MAZE, 1, 1, self.ppos, self.exit, False)
+            play_sfx(VICTORY_SFX)
             return
 
         # Track A* path progress for Goal Tree
@@ -927,6 +966,7 @@ class Game:
             self.arena.player.max_hp = self.p_hp_max
             self.steps_left = 0; self.maze_mode = "WAIT_ROLL"
             self.state = S_COMBAT
+            play_bgm(BATTLE_BGM)
 
     def _upd_combat(self):
         r = self.arena.update()
@@ -935,8 +975,11 @@ class Game:
         player_hp = self.arena.player.hp if hasattr(self.arena, 'player') else 1
         new_state = evaluate_game_state(S_COMBAT, player_hp, enemy_hp, self.ppos, self.exit, False)
         if r=="PLAYER_DEAD" or new_state == S_OVER:
+            stop_bgm()
+            play_sfx(DEFEAT_SFX)
             self.state = S_OVER
         elif r=="ENEMY_DEAD" or new_state == S_MAZE:
+            stop_bgm()
             # Restore player HP after win (Rule: Win → restore HP)
             self.p_hp = self.p_hp_max
             self.pickup_w = self.e_weapon
@@ -958,14 +1001,26 @@ class Game:
 
     # ── MODE SELECT (MAIN MENU) ────────────────────────────────────────
     def _draw_mode(self,c):
-        c.fill(BG)
-        for y in range(CH):
-            t=y/CH
-            pygame.draw.line(c,(int(8+10*t),int(8+5*t),int(16+20*t)),(0,y),(CW,y))
+        if not hasattr(self, "_menu_bg"):
+            bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_game", "assets", "images", "Menus", "Start menu background.png")
+            if os.path.exists(bg_path):
+                self._menu_bg = load_img(bg_path, (CW, CH))
+            else:
+                self._menu_bg = None
+
+        if self._menu_bg:
+            c.blit(self._menu_bg, (0, 0))
+        else:
+            c.fill(BG)
+            for y in range(CH):
+                t=y/CH
+                pygame.draw.line(c,(int(8+10*t),int(8+5*t),int(16+20*t)),(0,y),(CW,y))
         
         # Title
-        txt(c,"🗡  STICKMAN MAZE COMBAT  🗡",58,GOLD,CW//2,CH//2-220,bold=True)
-        txt(c,"Select Difficulty",24,WHITE,CW//2,CH//2-140)
+        game_color = (217, 164, 65)  # HEX: #D9A441
+        txt(c,"DUNGEON",80,game_color,CW//2,CH//2-240,bold=True)
+        txt(c,"DICE & DUELIST",50,game_color,CW//2,CH//2-170,bold=True)
+        txt(c,"Select Difficulty",24,(190, 170, 130),CW//2,CH//2-55)
 
         for i,dname in enumerate(["Easy","Medium","Hard"]):
             d=DIFFICULTIES[dname]
@@ -975,31 +1030,35 @@ class Game:
             sel=(self.diff_name==dname)
 
             # Card BG
-            base_col=(20,20,35) if not hover else (28,28,48)
-            rrect(c,base_col,btn,14)
-            # Coloured top bar
-            top=pygame.Rect(btn.x,btn.y,btn.w,6)
-            rrect(c,d["col"],top,14)
+            box_surf = pygame.Surface((btn.width, btn.height), pygame.SRCALPHA)
+            alpha_col = (15, 12, 28, 210) if not hover else (30, 24, 56, 210)
+            rrect(box_surf, alpha_col, (0, 0, btn.width, btn.height), 14)
+            c.blit(box_surf, btn.topleft)
+
             # Border
             border_col=d["col"] if (hover or sel) else (50,50,80)
             rrect(c,border_col,btn,14,w=2)
 
+            # Coloured top bar
+            top=pygame.Rect(btn.x,btn.y,btn.width,6)
+            rrect(c,d["col"],top,14)
+
             # Label
-            txt(c,d["label"],34,d["col"],btn.centerx,btn.y+40,bold=True)
-            # Key hint
-            txt(c,f"[{i+1}]",18,(160,160,180),btn.centerx,btn.y+72)
+            txt(c,d["label"],34,d["col"],btn.centerx,btn.y+45,bold=True)
             # Description
-            txt(c,d["desc"],15,WHITE,btn.centerx,btn.y+100)
+            txt(c,d["desc"],15,WHITE,btn.centerx,btn.y+85)
 
             if sel:
-                sm=font(13,True).render("✓ SELECTED",True,d["col"])
-                c.blit(sm,(btn.x+btn.w//2-sm.get_width()//2,btn.bottom-22))
+                sm=font(13,True).render("SELECTED",True,d["col"])
+                c.blit(sm,(btn.x+btn.width//2-sm.get_width()//2,btn.bottom-22))
         
         # PLAY BUTTON
         play_btn = pygame.Rect(CW//2-120, CH-100, 240, 60)
         mp = pygame.mouse.get_pos()
         play_hover = play_btn.collidepoint(mp)
-        rrect(c, GREEN if play_hover else (40,150,60), play_btn, 10)
+        gold_col = (217, 164, 65)
+        hover_col = (237, 184, 85)
+        rrect(c, hover_col if play_hover else gold_col, play_btn, 10)
         txt(c, "START GAME", 30, WHITE, play_btn.centerx, play_btn.centery, bold=True)
 
     # ── MAZE ───────────────────────────────────────────────
@@ -1016,11 +1075,6 @@ class Game:
         # Subtle A* path hint (golden tiles)
         for pr2, pc2 in self.opt:
             c.blit(self._hl_gold,(MOX+pc2*TILE,MOY+pr2*TILE))
-
-        # BFS/CSP: highlight valid destination tiles (exactly dice_value steps)
-        if self.maze_mode=="WAIT_MOVE" and not self.show_pickup:
-            for nr, nc in self._csp_valid:
-                c.blit(self._hl_move,(MOX+nc*TILE,MOY+nr*TILE))
 
         # EXIT glow
         er,ec=self.exit
@@ -1039,6 +1093,19 @@ class Game:
         ps=pygame.Surface((TILE,TILE),pygame.SRCALPHA)
         pygame.draw.rect(ps,(*BLUE,pa),(0,0,TILE,TILE),2,border_radius=4)
         c.blit(ps,(MOX+pc*TILE,MOY+pr*TILE))
+
+        # Fog of war
+        fog = pygame.Surface((MAZE_W, MAZE_H), pygame.SRCALPHA)
+        fog.fill((6, 6, 12, 250))
+        px = MOX + pc * TILE + TILE // 2
+        py = MOY + pr * TILE + TILE // 2
+        radius = TILE * 2.5
+        glow = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+        for rad in range(int(radius), 0, -4):
+            a = int(255 * (1 - (rad / radius)))
+            pygame.draw.circle(glow, (0, 0, 0, a), (int(radius), int(radius)), rad)
+        fog.blit(glow, (px - radius, py - radius), special_flags=pygame.BLEND_RGBA_SUB)
+        c.blit(fog, (0, 0))
 
         # Steps remaining indicator above player
         if self.maze_mode=="WAIT_MOVE" and self.steps_left>0:
@@ -1091,17 +1158,17 @@ class Game:
         self.dice.draw(c)
 
         # Player Section
-        py = 440
+        py = 380
         player_rect = pygame.Rect(SX+12, py, SIDEBAR_W-24, 150)
         rrect(c, (20,20,35), player_rect, 12)
         rrect(c, (40,40,65), player_rect, 12, w=2)
         txt(c,"— PLAYER —",17,CYAN,SCX,py+20)
         hp_bar(c,SX+28,py+45,SIDEBAR_W-56,24,self.p_hp,self.p_hp_max,"HP",WHITE)
-        txt(c,f"⚔  {self.p_weapon.name}",18,self.p_weapon.col,SCX,py+105)
+        txt(c,f"{self.p_weapon.name}",18,self.p_weapon.col,SCX,py+105)
         txt(c,f"({self.p_weapon.wtype}   DMG:{self.p_weapon.dmg})",14,WHITE,SCX,py+125)
 
         # Controls Section
-        cy = 610
+        cy = 550
         ctrl_rect = pygame.Rect(SX+12, cy, SIDEBAR_W-24, 100)
         rrect(c, (20,20,35), ctrl_rect, 12)
         rrect(c, (40,40,65), ctrl_rect, 12, w=2)
@@ -1113,20 +1180,64 @@ class Game:
 
     # ── End Screens ────────────────────────────────────────
     def _draw_over(self,c):
-        c.fill((8,4,4))
-        for y in range(CH):
-            t=y/CH; pygame.draw.line(c,(int(30+40*t),4,4),(0,y),(CW,y))
-        txt(c,"GAME OVER",78,(255,60,60),CW//2,CH//2-80,bold=True)
-        txt(c,"You were defeated...",28,WHITE,CW//2,CH//2+10)
-        txt(c,"R = Restart    Q = Quit",22,YELLOW,CW//2,CH//2+70)
+        if not hasattr(self, "_over_bg"):
+            bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_game", "assets", "images", "Menus", "Game over menu background.png")
+            if os.path.exists(bg_path):
+                self._over_bg = load_img(bg_path, (CW, CH))
+            else:
+                self._over_bg = None
+
+        if self._over_bg:
+            c.blit(self._over_bg, (0, 0))
+        else:
+            c.fill((8,4,4))
+            for y in range(CH):
+                t=y/CH; pygame.draw.line(c,(int(30+40*t),4,4),(0,y),(CW,y))
+                
+        txt(c,"GAME OVER",78,(255, 77, 90),CW//2,CH//2-80,bold=True)
+        txt(c,"You were defeated...",28,(200, 162, 255),CW//2,CH//2+10)
+
+        play_btn = pygame.Rect(CW//2 - 220, CH//2 + 80, 200, 60)
+        quit_btn = pygame.Rect(CW//2 + 20, CH//2 + 80, 200, 60)
+        mp = pygame.mouse.get_pos()
+        btn_col = (43, 10, 10)
+        btn_hover = (63, 20, 20)
+        
+        rrect(c, btn_hover if play_btn.collidepoint(mp) else btn_col, play_btn, 10)
+        txt(c, "Restart", 26, WHITE, play_btn.centerx, play_btn.centery, bold=True)
+        
+        rrect(c, btn_hover if quit_btn.collidepoint(mp) else btn_col, quit_btn, 10)
+        txt(c, "Quit", 26, WHITE, quit_btn.centerx, quit_btn.centery, bold=True)
 
     def _draw_win(self,c):
-        c.fill((4,10,4))
-        for y in range(CH):
-            t=y/CH; pygame.draw.line(c,(4,int(20+40*t),8),(0,y),(CW,y))
-        txt(c,"YOU ESCAPED!",76,GREEN,CW//2,CH//2-80,bold=True)
-        txt(c,"The maze couldn't hold you.",28,CYAN,CW//2,CH//2+10)
-        txt(c,"R = Play Again    Q = Quit",22,YELLOW,CW//2,CH//2+70)
+        if not hasattr(self, "_win_bg"):
+            bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maze_game", "assets", "images", "Menus", "Victory menu background.png")
+            if os.path.exists(bg_path):
+                self._win_bg = load_img(bg_path, (CW, CH))
+            else:
+                self._win_bg = None
+
+        if self._win_bg:
+            c.blit(self._win_bg, (0, 0))
+        else:
+            c.fill((4,10,4))
+            for y in range(CH):
+                t=y/CH; pygame.draw.line(c,(4,int(20+40*t),8),(0,y),(CW,y))
+                
+        txt(c,"YOU ESCAPED!",76,(108, 255, 143),CW//2,CH//2-80,bold=True)
+        txt(c,"The maze couldn't hold you.",28,(200, 162, 255),CW//2,CH//2+10)
+
+        play_btn = pygame.Rect(CW//2 - 220, CH//2 + 80, 200, 60)
+        quit_btn = pygame.Rect(CW//2 + 20, CH//2 + 80, 200, 60)
+        mp = pygame.mouse.get_pos()
+        btn_col = (58, 42, 18)
+        btn_hover = (78, 62, 38)
+        
+        rrect(c, btn_hover if play_btn.collidepoint(mp) else btn_col, play_btn, 10)
+        txt(c, "Play Again", 26, WHITE, play_btn.centerx, play_btn.centery, bold=True)
+        
+        rrect(c, btn_hover if quit_btn.collidepoint(mp) else btn_col, quit_btn, 10)
+        txt(c, "Quit", 26, WHITE, quit_btn.centerx, quit_btn.centery, bold=True)
 
     # ── Main Loop ──────────────────────────────────────────
     def run(self):

@@ -1,4 +1,4 @@
-# 🗡 Stickman Maze Combat
+# Dungeon Dice & Duelist
 
 A 2D game combining procedurally generated maze exploration with action-packed 1v1 stickman combat, built in Python + Pygame. Every system is powered by a named AI/CS algorithm.
 
@@ -66,11 +66,13 @@ D3 Game/
 │   └── assets/
 │       ├── images/
 │       │   ├── dice/           # dice_1.png … dice_6.png
-│       │   └── maze/           # background.png, player_dot.png, Goal.png
+│       │   ├── maze/           # background.png, player_dot.png, Goal.png
+│       │   └── Menus/          # Menu backgrounds
 │       └── videos/
 │           └── dice_roll.mp4   # Dice roll animation
 │
 └── maze_combat/                # Combat runtime assets
+    ├── Audio/                  # Battle themes and SFX
     ├── backgrounds/            # 1.jpeg … 6.jpeg (random arena BGs)
     └── Weapons/                # Weapon sprite PNGs
         ├── Sword.png

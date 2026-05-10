@@ -1,20 +1,39 @@
-# maze_game/core/combat_ai.py
-
+# for movement
 def hill_climbing_movement(enemy_x, player_x, enemy_speed):
     """
     Hill Climbing
     Use: Enemy combat movement (Move toward player to maximize proximity/damage)
     """
-    # Objective function: Minimize distance to player
-    dist = abs(enemy_x - player_x)
-    if dist < 5:
-        return 0, 1 if enemy_x < player_x else -1 # Optimal state reached
-        
-    if enemy_x < player_x:
-        return enemy_speed, 1 # Move right (facing right)
-    else:
-        return -enemy_speed, -1 # Move left (facing left)
+    current_dist = abs(player_x - enemy_x)
 
+    candidates = [
+        enemy_x - enemy_speed,
+        enemy_x,
+        enemy_x + enemy_speed
+    ]
+
+    best_pos = enemy_x
+    best_score = current_dist
+
+    for pos in candidates:
+        score = abs(player_x - pos)
+
+        if score < best_score:
+            best_score = score
+            best_pos = pos
+
+    movement = best_pos - enemy_x
+    
+    if movement > 0:
+        facing = 1
+    elif movement < 0:
+        facing = -1
+    else:
+        facing = 1 if enemy_x < player_x else -1
+
+    return movement, facing
+
+# for resolving attacks
 def forward_chaining_combat(attacker_rect, defender_rect, attacker_weapon_dmg):
     """
     Forward Chaining & Rule-Based System

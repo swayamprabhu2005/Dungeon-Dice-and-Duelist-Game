@@ -1,6 +1,5 @@
-# maze_game/core/state_logic.py
 
-# Game States
+# Game States transitions
 S_MENU, S_MODE, S_MAZE, S_COMBAT, S_OVER, S_WIN = "MENU", "MODE", "MAZE", "COMBAT", "OVER", "WIN"
 
 def evaluate_game_state(current_state, player_hp, enemy_hp, player_pos, exit_pos, enemy_triggered):

@@ -1,4 +1,3 @@
-# maze_game/core/spawn_logic.py
 
 def evaluate_propositional_logic(player_on_path, path_progress_percent):
     """

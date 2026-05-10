@@ -835,7 +835,7 @@ class Game:
             if ev.key==pygame.K_q and self.state in (S_OVER,S_WIN):
                 pygame.quit(); sys.exit()
             if ev.key==pygame.K_r and self.state in (S_OVER,S_WIN):
-                self.p_weapon=SWORD(); self._new_game()
+                self.p_weapon=SWORD(); self.state = S_MODE
 
             # Mode select: 1/2/3 keys
             if self.state==S_MODE:
@@ -896,7 +896,7 @@ class Game:
                 play_btn = pygame.Rect(CW//2 - 220, CH//2 + 80, 200, 60)
                 quit_btn = pygame.Rect(CW//2 + 20, CH//2 + 80, 200, 60)
                 if play_btn.collidepoint(mp):
-                    self.p_weapon=SWORD(); self._new_game()
+                    self.p_weapon=SWORD(); self.state = S_MODE
                 elif quit_btn.collidepoint(mp):
                     pygame.quit(); sys.exit()
 

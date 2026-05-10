@@ -1,5 +1,6 @@
 import heapq
 
+# neighbor generator function(grid,current row,current column)
 def grid_nb(g, r, c):
     for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
         nr, nc = r + dr, c + dc
@@ -11,6 +12,7 @@ def astar_solver(g, start, goal):
     A* Algorithm
     Use: Find optimal path from player -> exit, and for enemy positioning.
     """
+    # Manhattan distance
     def h(a, b): return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
     q = [(h(start, goal), 0, start)]
